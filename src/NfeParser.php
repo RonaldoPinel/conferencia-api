@@ -13,9 +13,9 @@ class NfeParser
 
         $envelope = simplexml_load_string($soapXml);
         if (!$envelope) {
-            $erros = libxml_get_errors();
             libxml_clear_errors();
-            throw new RuntimeException('Resposta SEFAZ com XML inválido. Chave: ' . $chave);
+            $preview = substr(strip_tags($soapXml), 0, 300);
+            throw new RuntimeException('Resposta SEFAZ inválida: ' . $preview);
         }
 
         // Localiza retDistDFeInt independente de namespace
