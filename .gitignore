@@ -1,0 +1,10 @@
+# Nunca subir ao repositório
+.env
+cert/*.pfx
+cert/*.p12
+cert/*.pem
+cert/*.key
+
+# Sistema
+.DS_Store
+Thumbs.db

@@ -1,0 +1,5 @@
+# Protege pastas sensíveis do acesso direto via browser
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteRule ^(src|routes|database|cert)/ - [F,L]
+</IfModule>
