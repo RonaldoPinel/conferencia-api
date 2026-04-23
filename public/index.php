@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-// ── CORS ──────────────────────────────────────────────────────
+// ── CORS (antes de qualquer saída) ────────────────────────────
 header('Content-Type: application/json; charset=utf-8');
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: GET, POST, PUT, OPTIONS');
@@ -12,52 +12,58 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     exit;
 }
 
-// ── .env ──────────────────────────────────────────────────────
-$envFile = __DIR__ . '/../.env';
-if (file_exists($envFile)) {
-    foreach (file($envFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
-        $line = trim($line);
-        if ($line === '' || str_starts_with($line, '#')) {
-            continue;
-        }
-        [$key, $val] = explode('=', $line, 2) + [1 => ''];
-        $_ENV[trim($key)] = trim($val);
+// ── Transforma erros PHP em exceções capturáveis ──────────────
+set_error_handler(function (int $severity, string $message, string $file, int $line): bool {
+    if (!(error_reporting() & $severity)) {
+        return false;
     }
-}
-
-// ── Autoload ──────────────────────────────────────────────────
-require_once __DIR__ . '/../src/Database.php';
-require_once __DIR__ . '/../src/NfeParser.php';
-require_once __DIR__ . '/../src/Sefaz.php';
-require_once __DIR__ . '/../routes/nfe.php';
-require_once __DIR__ . '/../routes/conferencia.php';
-
-// ── Roteador ──────────────────────────────────────────────────
-$uri    = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
-$base   = rtrim(dirname($_SERVER['SCRIPT_NAME']), '/');
-$uri    = '/' . ltrim(substr($uri, strlen($base)), '/');
-$method = $_SERVER['REQUEST_METHOD'];
+    throw new ErrorException($message, 0, $severity, $file, $line);
+});
 
 try {
-    // POST /nfe/itens  → busca e agrupa itens de múltiplas NF-e na SEFAZ
+    // ── .env ──────────────────────────────────────────────────
+    $envFile = __DIR__ . '/../.env';
+    if (file_exists($envFile)) {
+        foreach (file($envFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
+            $line = trim($line);
+            if ($line === '' || $line[0] === '#') {
+                continue;
+            }
+            $parts = explode('=', $line, 2);
+            if (count($parts) === 2) {
+                $_ENV[trim($parts[0])] = trim($parts[1]);
+            }
+        }
+    }
+
+    // ── Autoload ──────────────────────────────────────────────
+    require_once __DIR__ . '/../src/Database.php';
+    require_once __DIR__ . '/../src/NfeParser.php';
+    require_once __DIR__ . '/../src/Sefaz.php';
+    require_once __DIR__ . '/../routes/nfe.php';
+    require_once __DIR__ . '/../routes/conferencia.php';
+
+    // ── Roteador ──────────────────────────────────────────────
+    $uri    = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+    $base   = rtrim(dirname($_SERVER['SCRIPT_NAME']), '/');
+    $uri    = '/' . ltrim(substr($uri, strlen($base)), '/');
+    $method = $_SERVER['REQUEST_METHOD'];
+
     if ($method === 'POST' && $uri === '/nfe/itens') {
         route_nfe_itens();
         exit;
     }
 
-    // GET /conferencias[?id_romaneio=X]
     if ($method === 'GET' && $uri === '/conferencias') {
         route_listar_conferencias();
         exit;
     }
 
-    // POST /conferencias  → cria nova conferência com itens esperados
     if ($method === 'POST' && $uri === '/conferencias') {
         route_criar_conferencia();
         exit;
     }
 
-    // GET|PUT /conferencias/{id}
     if (preg_match('#^/conferencias/(\d+)$#', $uri, $m)) {
         $id = (int)$m[1];
         if ($method === 'GET') {
@@ -71,7 +77,6 @@ try {
         exit;
     }
 
-    // PUT /conferencias/{id}/finalizar
     if (preg_match('#^/conferencias/(\d+)/finalizar$#', $uri, $m) && $method === 'PUT') {
         route_finalizar_conferencia((int)$m[1]);
         exit;
@@ -82,5 +87,10 @@ try {
 
 } catch (Throwable $e) {
     http_response_code(500);
-    echo json_encode(['success' => false, 'erro' => $e->getMessage()]);
+    echo json_encode([
+        'success' => false,
+        'erro'    => $e->getMessage(),
+        'arquivo' => basename($e->getFile()),
+        'linha'   => $e->getLine(),
+    ]);
 }
