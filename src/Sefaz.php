@@ -8,38 +8,40 @@ class Sefaz
     private string $cnpj;
     private int    $cUF;
 
-    // Mapeamento de cUF (código IBGE) para URL do webservice NFeDistribuicaoDFe
-    private const URLS = [
-        // Ambiente Nacional (maioria dos estados)
-        'default' => 'https://www1.nfe.fazenda.gov.br/NFeDistribuicaoDFe/NFeDistribuicaoDFe.asmx',
-    ];
+    private const URL_AN = 'https://www1.nfe.fazenda.gov.br/NFeDistribuicaoDFe/NFeDistribuicaoDFe.asmx';
 
-    public function __construct()
+    /**
+     * @param string $tipo  'transp' (padrão) ou 'nac'
+     */
+    public function __construct(string $tipo = 'transp')
     {
-        $pfxPath = __DIR__ . '/../cert/certificado.pfx';
-        $pfxPass = $_ENV['CERT_PASSWORD'] ?? '';
-        $this->cnpj = preg_replace('/\D/', '', $_ENV['CNPJ'] ?? '');
-        $this->cUF  = (int)($_ENV['UF_IBGE'] ?? 35);
+        if ($tipo === 'nac') {
+            $pfxPath  = __DIR__ . '/../cert/certificado_nac.pfx';
+            $pfxPass  = $_ENV['CERT_PASSWORD_NAC'] ?? '';
+            $this->cnpj = preg_replace('/\D/', '', $_ENV['CNPJ_NAC'] ?? '');
+        } else {
+            $pfxPath  = __DIR__ . '/../cert/certificado.pfx';
+            $pfxPass  = $_ENV['CERT_PASSWORD'] ?? '';
+            $this->cnpj = preg_replace('/\D/', '', $_ENV['CNPJ'] ?? '');
+        }
+
+        $this->cUF = (int)($_ENV['UF_IBGE'] ?? 35);
 
         if (!file_exists($pfxPath)) {
-            throw new RuntimeException('Certificado .pfx não encontrado em cert/certificado.pfx');
+            throw new RuntimeException("Certificado .pfx não encontrado: {$pfxPath}");
         }
 
         $pfxData = file_get_contents($pfxPath);
         $certs   = [];
 
         if (!openssl_pkcs12_read($pfxData, $certs, $pfxPass)) {
-            throw new RuntimeException('Erro ao ler certificado .pfx — verifique a senha em CERT_PASSWORD.');
+            throw new RuntimeException("Erro ao ler certificado .pfx ({$tipo}). Verifique a senha.");
         }
 
         $this->certPem = $certs['cert'];
         $this->keyPem  = $certs['pkey'];
     }
 
-    /**
-     * Busca os itens de uma NF-e na SEFAZ via NFeDistribuicaoDFe.
-     * Retorna array de itens: [codigo, descricao, ncm, unidade, quantidade, valor_unit]
-     */
     public function buscarItensPorChave(string $chave): array
     {
         $soapBody = $this->montarEnvelope($chave);
@@ -49,7 +51,7 @@ class Sefaz
 
     private function montarEnvelope(string $chave): string
     {
-        $cnpj = htmlspecialchars($this->cnpj, ENT_XML1);
+        $cnpj  = htmlspecialchars($this->cnpj, ENT_XML1);
         $chave = htmlspecialchars($chave, ENT_XML1);
         $cUF   = $this->cUF;
 
@@ -78,7 +80,6 @@ XML;
 
     private function enviarSoap(string $body): string
     {
-        // Escreve cert e chave em arquivos temporários pois cURL precisa de caminhos
         $certFile = tempnam(sys_get_temp_dir(), 'nfe_cert_');
         $keyFile  = tempnam(sys_get_temp_dir(), 'nfe_key_');
 
@@ -86,7 +87,7 @@ XML;
         file_put_contents($keyFile,  $this->keyPem);
 
         try {
-            $ch = curl_init(self::URLS['default']);
+            $ch = curl_init(self::URL_AN);
 
             curl_setopt_array($ch, [
                 CURLOPT_POST           => true,
@@ -109,10 +110,10 @@ XML;
             curl_close($ch);
 
             if ($curlErro) {
-                throw new RuntimeException("Erro cURL ao consultar SEFAZ: {$curlErro}");
+                throw new RuntimeException("Erro cURL: {$curlErro}");
             }
             if ($httpCode >= 400) {
-                throw new RuntimeException("SEFAZ retornou HTTP {$httpCode}.");
+                throw new RuntimeException("SEFAZ HTTP {$httpCode}.");
             }
 
             return $resposta;

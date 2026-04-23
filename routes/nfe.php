@@ -4,59 +4,77 @@ declare(strict_types=1);
 function route_nfe_itens(): void
 {
     $input  = json_decode(file_get_contents('php://input'), true) ?? [];
-    $chaves = $input['chaves'] ?? [];
+    $nfes   = $input['nfes'] ?? [];
 
-    if (empty($chaves) || !is_array($chaves)) {
+    // Suporte ao formato antigo { chaves: [] }
+    if (empty($nfes) && !empty($input['chaves'])) {
+        $nfes = array_map(fn($c) => ['nfe' => $c, 'emitente' => 'transp'], $input['chaves']);
+    }
+
+    if (empty($nfes) || !is_array($nfes)) {
         http_response_code(400);
-        echo json_encode(['success' => false, 'erro' => 'Parâmetro "chaves" (array) é obrigatório.']);
+        echo json_encode(['success' => false, 'erro' => 'Parâmetro "nfes" (array) é obrigatório.']);
         return;
     }
 
-    $sefaz    = new Sefaz();
+    // Instancia os dois certificados uma vez só
+    $sefazTransp = null;
+    $sefazNac    = null;
+
     $agrupado = [];
     $erros    = [];
 
-    foreach ($chaves as $chave) {
-        $chave = preg_replace('/\D/', '', (string)$chave);
+    foreach ($nfes as $item) {
+        $chave    = preg_replace('/\D/', '', (string)($item['nfe']      ?? $item));
+        $emitente = strtolower((string)($item['emitente'] ?? 'transp'));
 
         if (strlen($chave) !== 44) {
             $erros[] = ['chave' => $chave, 'erro' => 'Chave inválida (deve ter 44 dígitos).'];
             continue;
         }
 
+        // Escolhe certificado: NAC para notas emitidas pela NAC, transportadora para o resto
+        $usarNac = (strpos($emitente, 'nac') !== false);
+
         try {
-            $itens = $sefaz->buscarItensPorChave($chave);
+            if ($usarNac) {
+                if ($sefazNac === null) {
+                    $sefazNac = new Sefaz('nac');
+                }
+                $itens = $sefazNac->buscarItensPorChave($chave);
+            } else {
+                if ($sefazTransp === null) {
+                    $sefazTransp = new Sefaz('transp');
+                }
+                $itens = $sefazTransp->buscarItensPorChave($chave);
+            }
 
-            foreach ($itens as $item) {
-                $cod = $item['codigo'];
-
+            foreach ($itens as $it) {
+                $cod = $it['codigo'];
                 if (!isset($agrupado[$cod])) {
                     $agrupado[$cod] = [
                         'codigo'    => $cod,
-                        'descricao' => $item['descricao'],
-                        'ncm'       => $item['ncm'],
-                        'unidade'   => $item['unidade'],
+                        'descricao' => $it['descricao'],
+                        'ncm'       => $it['ncm'],
+                        'unidade'   => $it['unidade'],
                         'qtd_total' => 0.0,
                         'nfes'      => [],
                     ];
                 }
-
-                $agrupado[$cod]['qtd_total'] += $item['quantidade'];
+                $agrupado[$cod]['qtd_total'] += $it['quantidade'];
                 $agrupado[$cod]['nfes'][]     = $chave;
             }
-        } catch (Throwable $e) {
+        } catch (\Throwable $e) {
             $erros[] = ['chave' => $chave, 'erro' => $e->getMessage()];
         }
     }
 
-    // Remove duplicatas nas chaves por item
-    foreach ($agrupado as &$item) {
-        $item['nfes']      = array_values(array_unique($item['nfes']));
-        $item['qtd_total'] = round($item['qtd_total'], 4);
+    foreach ($agrupado as &$it) {
+        $it['nfes']      = array_values(array_unique($it['nfes']));
+        $it['qtd_total'] = round($it['qtd_total'], 4);
     }
-    unset($item);
+    unset($it);
 
-    // Ordena por código
     usort($agrupado, fn($a, $b) => strcmp($a['codigo'], $b['codigo']));
 
     echo json_encode([
